@@ -20,10 +20,10 @@
     display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none;
     -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;
     padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom);}
-  #stage{position:relative;aspect-ratio:384/576;height:100%;max-height:100%;max-width:100%;
+  #stage{position:relative;aspect-ratio:192/332;height:100%;max-height:100%;max-width:100%;
     background:#000;box-shadow:0 0 0 1px #222,0 0 50px rgba(80,110,255,.12);}
-  #stage.wide{height:auto;width:100%;max-width:100%;aspect-ratio:1.30/1;}
-  #stage.wide #scan{display:none;}
+  #stage.pc{height:100%;max-height:100%;width:auto;aspect-ratio:192/332;}
+  #stage.pc #scan{display:none;}
   canvas{display:block;width:100%;height:100%;image-rendering:pixelated;}
   #scan{position:absolute;inset:0;pointer-events:none;
     background:repeating-linear-gradient(to bottom,rgba(0,0,0,.22) 0 1px,rgba(0,0,0,0) 1px 3px);
@@ -32,7 +32,7 @@
 </style>
 </head>
 <body>
-<div id="stage"><canvas id="cv" width="384" height="576"></canvas><div id="scan"></div></div>
+<div id="stage"><canvas id="cv" width="192" height="332"></canvas><div id="scan"></div></div>
 <script>
 (function(){
 "use strict";
@@ -43,21 +43,27 @@ const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),stage=document.ge
    レイアウト。1986はアーケードの縦画面、2002は仕様書の256x224。
    ========================================================== */
 let W,H,WALL,FX,FW,FR,COLS,BW,BH,TOP,ROOF,PADY,PADH,PW_N,BR,SIDEHUD,SC;
+/* 画面（キャンバス）側のサイズと、盤面をどれだけ下へ置くか。
+   盤面そのものの座標系（256x224の内側16〜176）は一切変更しない。 */
+let CANW,CANH,OFY,TOPBAR,CTRLH;
 function setLayout(m){
   if(m==='2002'){
     W=256;H=224;WALL=16;FX=16;FW=160;FR=176;COLS=10;BW=16;BH=8;
     TOP=16;ROOF=16;PADY=196;PADH=8;PW_N=32;BR=2;SIDEHUD=true;SC=0.39;
-    stage.classList.add('wide');
+    // 縦持ち：盤面(192幅)はそのまま、右側UIを上へ、下にVAUS操作エリア
+    TOPBAR=44;CTRLH=64;CANW=192;OFY=TOPBAR;CANH=TOPBAR+H+CTRLH;
+    stage.classList.add('pc');
   }else{
     W=384;H=576;WALL=16;FX=16;FW=352;FR=368;COLS=11;BW=32;BH=16;
     TOP=112;ROOF=72;PADY=516;PADH=14;PW_N=64;BR=4.5;SIDEHUD=false;SC=1;
-    stage.classList.remove('wide');
+    TOPBAR=0;CTRLH=0;CANW=W;OFY=0;CANH=H;
+    stage.classList.remove('pc');
   }
-  cv.width=W;cv.height=H;fitDPR();
+  fitDPR();
 }
 function fitDPR(){
   const d=Math.min(window.devicePixelRatio||1,3);
-  cv.width=W*d;cv.height=H*d;ctx.setTransform(d,0,0,d,0,0);ctx.imageSmoothingEnabled=false;
+  cv.width=CANW*d;cv.height=CANH*d;ctx.setTransform(d,0,0,d,0,0);ctx.imageSmoothingEnabled=false;
 }
 function CX(){return FX+FW/2;}
 window.addEventListener('resize',fitDPR);
@@ -98,41 +104,6 @@ const BRICK={'1':{c:'#fcfcfc',p:50},'2':{c:'#f0e820',p:60},'3':{c:'#20d8dc',p:70
 const COLKEYS=['1','2','3','4','5','6','7','8'];
 const ITEMCH='abcdefgh';   // 小文字＝アイテム入りの通常ブロック（原作はアイテム位置が固定）
 
-/* ===== 1986モード（11列・ラウンド1〜32、33はDOH） ===== */
-const L1986=[
-["11111111111","22222222222","33333333333","44444444444","55555555555","66666666666"],
-["GG.......GG","..1111111..","..2222222..","...33333...","...44444...","....555....","....666...."],
-["1.1.1.1.1.1",".2.2.2.2.2.","3.3.3.3.3.3",".4.4.4.4.4.","5.5.5.5.5.5",".6.6.6.6.6."],
-["SS.......SS","11.......11","22.......22","33.SSSSS.33","44.......44","55.......55","66.......66","77.......77"],
-[".....1.....","....222....","...33333...","..4444444..",".555555555.","66666666666",".777777777.","..88888.8..","...SSSSS..."],
-["1.........1","11.......11",".22.....22.","..33...33..","...44.44...","....555....","...66.66...","..77...77.."],
-["GG.GGGGG.GG","..1111111..","..2222222..","..3333333..","..4444444..","..5555555..","GG.......GG"],
-["1..........","11.........",".22........","..33.......","...44......","....55.....",".....66....","......77...",".......88..","........SS.",".........S."],
-["....111....","....222....","33333333333","44444444444","....555....","....666...."],
-["8.8.8.8.8.8","8.8.8.8.8.8","7.7.7.7.7.7","7.7.7.7.7.7","SSSSSSSSSSS"],
-["..SSSSSSS..","..S.....S..","..SSSSSSS.."],
-["..4.....4..","...4...4...","..4444444..",".44.444.44.","44444444444","4.4444444.4","4.S.....S.4","...44.44..."],
-["1.2.3.4.5.6","1.2.3.4.5.6","1.2.3.4.5.6","1.2.3.4.5.6","1.2.3.4.5.6","1.2.3.4.5.6"],
-["11.........","1122.......","..2233.....","....3344...","......4455.","........55S","..........S"],
-["88888888888",".777777777.","..6666666..","...55555...","....444....","...33333...","..2222222..",".111111111."],
-["S.........S",".1.......1.","..2.....2..","...3...3...","....4.4....",".....5.....","....4.4....","...3...3...","..2.....2..",".1.......1.","S.........S"],
-[".....1.....","....111....","...11111...","..1111111..",".222222222.","22222222222","....333....","...33333..."],
-["11111111111","G.G.G.G.G.G","22222222222","G.G.G.G.G.G","33333333333"],
-["66.6.6.6.66",".5.5.5.5.5.","44.4.4.4.44",".3.3.3.3.3.","22.2.2.2.22","SS.......SS"],
-["GGGG...GGGG","11111111111","22.SSSSS.22","33.S...S.33","44.SSSSS.44","55555555555"],
-["11223344556","22334455661","33445566112","44556611223","55661122334"],
-["11.22.33.44","11.22.33.44","...........","55.66.77.88","55.66.77.88","...........","SS.SS.SS.SS"],
-["11111111111",".222222222.","..3333333..","...44444...","....555....",".....6.....","GG.......GG"],
-["1G1G1G1G1G1","22222222222","3G3G3G3G3G3","44444444444","5G5G5G5G5G5","66666666666"],
-["11111111111","1.........1","1.2222222.1","1.2.....2.1","1.2.333.2.1","1.2.....2.1","1.2222222.1","1.........1","11111111111"],
-["S1S1S1S1S1S","1S1S1S1S1S1","S2S2S2S2S2S","2S2S2S2S2S2"],
-["G111111111G","G222222222G","G333333333G","G444444444G","G555555555G"],
-["1...2...3..","..4...5...6","7...8...S..","..1...2...3","4...5...6.."],
-[".11.....11.","1..1...1..1","....2.2....","...3...3...","..44...44..",".5.......5.","66.......66"],
-["....SSS....","....S1S....","....S2S....","....S3S....","...44444...","..5555555..",".666666666.","77777777777"],
-["S.........S",".S.......S.","..S.....S..","...S...S...","....S.S....","11111111111","22222222222","33333333333"],
-["GG.GGGGG.GG","1S1S1S1S1S1","22222222222","3S3S3S3S3S3","44444444444","5.5.5.5.5.5"]
-];
 
 /* ===== 2002モード（仕様書の10列・16x8px。11/22/33はボス） ===== */
 const L2002=[
@@ -184,15 +155,13 @@ function beep(f,d,t,v){if(!actx)return;try{
   o.connect(g);g.connect(actx.destination);o.start();o.stop(actx.currentTime+d);}catch(e){}}
 
 /* ===================== 保存 ===================== */
-let mode='1986';
-const hi={'1986':0,'2002':0};
+let mode='2002';                       // 2002 PC版のみ（1986アーケード版は終了）
+const hi={'2002':0};
 try{
-  hi['1986']=parseInt(localStorage.getItem('vaus.hi.1986')||'0',10)||0;
   hi['2002']=Math.max(50000,parseInt(localStorage.getItem('vaus.hi.2002')||'0',10)||0);
-  const m=localStorage.getItem('vaus.mode');if(m==='1986'||m==='2002')mode=m;
 }catch(e){}
 function saveHi(){try{localStorage.setItem('vaus.hi.'+mode,String(hi[mode]));}catch(e){}}
-function saveMode(){try{localStorage.setItem('vaus.mode',mode);}catch(e){}}
+function saveMode(){}
 
 /* ===================== 状態 ===================== */
 const FINAL=33;
@@ -206,11 +175,13 @@ let capCount=0,capTarget=0,capIdx=0,lastCap='',capStreak=0,volley=0;
 let boss=null,absorbed=0;
 let msg='',readyT=0,clearT=0,contT=0,shake=0,flash=0,fireCool=0,foeTimer=0;
 let fadeIn=0,serveSpawn=0;
-let titleSel=1;
 
 /* ===================== 速度 ===================== */
 const FAST=[8,10,14,16,23,27,29],SLOW=[11,13,17,28];
+// 1986 arcade
 const STEPS=[10,22,38,58,82];
+// 2002 PC 実動画からのR1暫定実測
+const STEPS_2002=[8,16,24,32,40];
 function baseSpeed(){
   if(mode==='2002') return TUNE.ballSpeedPxPerSec/60;
   let s=2.9+Math.min(Math.floor((round-1)/8),3)*0.16;
@@ -226,16 +197,24 @@ function renorm(){const t=ballSpeed();
   for(const b of balls){if(b.stuck)continue;const s=Math.hypot(b.vx,b.vy)||1;b.vx=b.vx/s*t;b.vy=b.vy/s*t;}}
 function recalcStep(){
   let s=0;
-  for(let i=0;i<STEPS.length;i++) if(hitCount>=STEPS[i])s++;
+  const steps=(mode==='2002') ? STEPS_2002 : STEPS;
+  for(let i=0;i<steps.length;i++){
+    if(hitCount>=steps[i])s++;
+  }
   if(mode==='2002'){
-    // PC版R1の実測では、序盤≈100 → 終盤≈150px/sへ段階的に加速。
-    // 天井到達だけで直ちに加速する証拠は取れていないため、PC版ではhitCountのみ採用。
+    // 2002 PC版：
+    // ブロックhitによる段階加速
+    // ＋ 初回の天井接触でさらに1段階
+    if(ceilHit)s++;
     s=Math.min(s,TUNE.speedStepMax);
   }else{
     if(ceilHit)s++;
     s=Math.min(s+Math.floor(stallT/2400),5);
   }
-  if(s!==speedStep){speedStep=s;renorm();}
+  if(s!==speedStep){
+    speedStep=s;
+    renorm();
+  }
 }
 function countHit(){hitCount++;slowF=Math.min(1,slowF+0.006);recalcStep();renorm();}
 
@@ -257,7 +236,7 @@ function buildRound(){
   foeTimer=Math.round(420*(mode==='2002'?1:1));
   const bk=(mode==='2002')?BOSS2002[round]:(round===FINAL?'doh86':null);
   if(bk){makeBoss(bk);return;}
-  const map=(mode==='2002')?L2002[idx2002(round)]:L1986[(round-1)%L1986.length];
+  const map=L2002[idx2002(round)];
   for(let r=0;r<map.length;r++) for(let c=0;c<COLS;c++){
     let ch=map[r][c];
     if(!ch||ch==='.')continue;
@@ -333,14 +312,17 @@ function clearRound(bonus){
 function finishGame(){state='win';msg='CONGRATULATIONS';if(score>hi[mode]){hi[mode]=score;saveHi();}}
 
 /* ===================== 入力 ===================== */
-function cX(v){const r=cv.getBoundingClientRect();return (v-r.left)/r.width*W;}
-function cY(v){const r=cv.getBoundingClientRect();return (v-r.top)/r.height*H;}
+function cXraw(v){const r=cv.getBoundingClientRect();return (v-r.left)/r.width*CANW;}
+function cYraw(v){const r=cv.getBoundingClientRect();return (v-r.top)/r.height*CANH;}
+function cX(v){return cXraw(v);}
+function cY(v){return cYraw(v)-OFY;}
+function inCtrl(rawY){return mode==='2002'&&rawY>=OFY+H;}
 function inGrab(x,y){return y>=PADY-(mode==='2002'?34:70)&&x>=paddle.x-(mode==='2002'?14:30)&&x<=paddle.x+paddle.w+(mode==='2002'?14:30);}
 function setTarget(x){paddle.target=(reverseT>0)?(FX+FR-x):x;}
 function press(){
   unlockAudio();
-  if(state==='title'){mode=(titleSel===0)?'1986':'2002';saveMode();setLayout(mode);startGame();return;}
-  if(state==='over'||state==='win'){state='title';setLayout('1986');return;}
+  if(state==='title'){setLayout('2002');startGame();return;}
+  if(state==='over'||state==='win'){state='title';return;}
   if(state==='continue'){lives=3;caps=[];shots=[];darts=[];pets=[];absorbed=0;shield=0;
     clearEffects();doorOpen=false;slowF=1;recalcStep();newBall();
     state='ready';msg='ROUND '+round;readyT=180;return;}
@@ -376,17 +358,25 @@ function releaseBall(b){
 let drag=null;
 cv.addEventListener('pointerdown',e=>{
   e.preventDefault();unlockAudio();
-  const x=cX(e.clientX),y=cY(e.clientY);
-  if(state==='title'){titleSel=(y<318)?0:1;press();return;}
+  const x=cX(e.clientX),y=cY(e.clientY),ry=cYraw(e.clientY);
+  if(state==='title'){press();return;}
   if(e.pointerType==='mouse'){setTarget(x);press();return;}
   if(state==='over'||state==='win'||state==='continue'){press();return;}
+  if(mode==='2002'){
+    // 盤面は触っても動かない。下の操作エリアでドラッグ、タップで発射。
+    if(inCtrl(ry)){drag={id:e.pointerId,ctrl:true,x0:x,base:paddle.x+paddle.w/2,moved:0};
+      try{cv.setPointerCapture(e.pointerId);}catch(err){}}
+    else press();
+    return;
+  }
   if(inGrab(x,y)){drag={id:e.pointerId,off:x-(paddle.x+paddle.w/2),x0:x,moved:0};
     try{cv.setPointerCapture(e.pointerId);}catch(err){}}
   else press();
 },{passive:false});
 cv.addEventListener('pointermove',e=>{
   e.preventDefault();const x=cX(e.clientX);
-  if(drag&&e.pointerId===drag.id){drag.moved=Math.max(drag.moved,Math.abs(x-drag.x0));setTarget(x-drag.off);}
+  if(drag&&e.pointerId===drag.id){drag.moved=Math.max(drag.moved,Math.abs(x-drag.x0));
+    if(drag.ctrl)setTarget(drag.base+(x-drag.x0));else setTarget(x-drag.off);}
   else if(e.pointerType==='mouse'&&e.buttons)setTarget(x);
 },{passive:false});
 cv.addEventListener('pointerup',e=>{if(drag&&e.pointerId===drag.id){if(drag.moved<8)press();drag=null;}});
@@ -396,7 +386,6 @@ const keys={};
 window.addEventListener('keydown',e=>{
   if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' ','Spacebar'].indexOf(e.key)>=0)e.preventDefault();
   keys[e.key]=true;
-  if(state==='title'&&(e.key==='ArrowUp'||e.key==='ArrowDown'))titleSel=1-titleSel;
   if(e.key===' '||e.key==='Spacebar'||e.key==='Enter')press();
 });
 window.addEventListener('keyup',e=>{keys[e.key]=false;});
@@ -680,7 +669,7 @@ function update(){
   if(serveSpawn>0)serveSpawn--;
   if(doorOpen&&doorAnim<1)doorAnim=Math.min(1,doorAnim+0.06);
   if(!doorOpen&&doorAnim>0)doorAnim=Math.max(0,doorAnim-0.06);
-  if(paddle.animT>0){                                   // Eの伸長アニメ（約0.5秒）
+  if(paddle.animT>0){                                   // Eの伸長アニメ（約0.20秒）
     paddle.animT--;
     const t=1-paddle.animT/TUNE.expandTicks,e=1-(1-t)*(1-t),c=paddle.x+paddle.w/2;
     paddle.w=paddle.wFrom+(paddle.wTarget-paddle.wFrom)*e;
@@ -754,6 +743,9 @@ function update(){
 
       if(b.vy>0&&b.y+b.r>=PADY&&b.y-b.r<=PADY+PADH&&b.x>=paddle.x-3&&b.x<=paddle.x+paddle.w+3){
         stallT=0;
+        // 2002 PC版：VAUSで球を返すたび10点
+        // Catchした場合も同じく1回加算
+        if(mode==='2002')addScore(10);
         if(paddle.catchOn){b.stuck=true;
           b.off=Math.max(-paddle.w/2+4,Math.min(paddle.w/2-4,b.x-(paddle.x+paddle.w/2)));
           b.vx=0;b.vy=0;paddle.holdT=0;beep(500,.05,'square',.05);}
@@ -1151,6 +1143,39 @@ function drawWalls(){
   if(doorAnim>0){const dh=60*doorAnim;ctx.fillStyle='#000';ctx.fillRect(FR,PADY-30,WALL,dh);ctx.fillStyle='#3cbcfc';ctx.fillRect(FR,PADY-30,1,dh);}
 }
 function HUD_TOP(){return mode==='2002'?0:56;}
+function drawTopBar(){
+  // 右側にあったUIを、デザインはそのままで上へ並べ替えたもの
+  ctx.fillStyle='#000';ctx.fillRect(0,0,CANW,TOPBAR);
+  pcText('HIGH SCORE',6,5,1,'#43ff54');
+  pcText(String(Math.max(50000,hi[mode],score)).padStart(5,'0'),6,16,1,'#ffffff');
+  pcText('1UP',104,5,1,'#ff4557');
+  pcText(String(score).padStart(2,'0'),104,16,1,'#ffffff');
+  pcText('ROUND',150,5,1,'#43ff54');
+  pcText(String(round),165,16,1,'#ffffff','center');
+  drawVaus(6,29,16,5,true);
+  pcText(String(Math.max(0,lives-1)).padStart(2,'0'),28,28,1,'#ffffff');
+  ctx.fillStyle='#3a3a58';ctx.fillRect(0,TOPBAR-2,CANW,2);
+  ctx.fillStyle='#5a5a88';
+  for(let x=0;x<CANW;x+=8)ctx.fillRect(x+1,TOPBAR-2,6,2);
+}
+function drawCtrlPanel(){
+  // 盤面の外に置いたVAUS操作エリア
+  const y0=OFY+H;
+  ctx.fillStyle='#000';ctx.fillRect(0,y0,CANW,CTRLH);
+  ctx.fillStyle='#3a3a58';ctx.fillRect(0,y0,CANW,2);
+  ctx.fillStyle='#5a5a88';
+  for(let x=0;x<CANW;x+=8)ctx.fillRect(x+1,y0,6,2);
+  const t0=14,t1=CANW-14,tw=t1-t0;
+  ctx.fillStyle='#0a0a12';ctx.fillRect(t0-2,y0+16,tw+4,18);
+  ctx.fillStyle='#1b1b2c';ctx.fillRect(t0-2,y0+16,tw+4,1);ctx.fillRect(t0-2,y0+33,tw+4,1);
+  const span=Math.max(1,FW-paddle.w);
+  const rel=Math.max(0,Math.min(1,(paddle.x-FX)/span));
+  const kw=Math.max(14,Math.round(tw*paddle.w/FW));
+  const kx=Math.round(t0+rel*(tw-kw));
+  drawVaus(kx,y0+20,kw,9,true);
+  pcText('DRAG TO MOVE',CANW/2,y0+42,1,'#43ff54','center');
+  pcText('TAP TO FIRE',CANW/2,y0+52,1,'#8890b0','center');
+}
 function drawHUD(){
   if(mode==='2002'){
     ctx.fillStyle='#000';ctx.fillRect(FR+16,0,W-FR-16,H);
@@ -1189,25 +1214,27 @@ function drawCenter(lines,cy,cx){
   }
 }
 function drawTitle(){
-  drawCenter([{t:'V A U S',size:38,color:'#fc9838'}],150);
-  const box=(y,sel,title,sub,col)=>{
-    ctx.fillStyle=sel?'rgba(60,188,252,.16)':'rgba(255,255,255,.04)';
-    ctx.fillRect(40,y,W-80,78);
-    ctx.strokeStyle=sel?'#3cbcfc':'#444';ctx.lineWidth=2;ctx.strokeRect(41,y+1,W-82,76);
-    ctx.textAlign='center';ctx.textBaseline='top';
-    ctx.font='bold 19px "Courier New",monospace';ctx.fillStyle=col;ctx.fillText(title,W/2,y+14);
-    ctx.font='bold 11px "Courier New",monospace';ctx.fillStyle='#8890b0';
-    ctx.fillText(sub[0],W/2,y+40);ctx.fillText(sub[1],W/2,y+55);
-  };
-  box(228,titleSel===0,'1986 ARCADE',['アーケード版の再現','縦画面 / 11列 / 全33面'],'#80d010');
-  box(328,titleSel===1,'2002 PC',['Doh It Again ベース','横画面 256x224 / 10列'],'#3cbcfc');
-  drawCenter([{t:'遊びたい方をタップ',size:13,color:'#8890b0'}],450);
+  const cx=CANW/2;
+  ctx.fillStyle='#000';ctx.fillRect(0,0,CANW,CANH);
+  // 上部の飾りブロック（盤面と同じ描き方）
+  const row=['5','8','3','4','5','8','3','4','5','8'];
+  for(let c=0;c<10;c++)drawBrick({x:16+c*16,y:48,t:row[c],alive:true,hit:0,hp:1});
+  for(let c=0;c<10;c++)drawBrick({x:16+c*16,y:56,t:row[9-c],alive:true,hit:0,hp:1});
+  pcText('VAUS',cx,96,4,'#ffffff','center');
+  pcText('HIGH SCORE',cx,172,1,'#43ff54','center');
+  pcText(String(Math.max(50000,hi[mode])).padStart(5,'0'),cx,184,1,'#ffffff','center');
+  drawVaus(cx-16,214,32,8,true);
+  if(Math.floor(Date.now()/450)%2===0)pcText('TAP TO START',cx,246,1,'#ffffff','center');
+  pcText('DRAG THE PANEL BELOW',cx,278,1,'#8890b0','center');
+  pcText('TO MOVE VAUS',cx,290,1,'#8890b0','center');
+  ctx.fillStyle='#3a3a58';ctx.fillRect(0,312,CANW,2);
 }
 function render(){
   ctx.save();
   if(shake>0)ctx.translate((Math.random()-.5)*shake*.6*SC,(Math.random()-.5)*shake*.6*SC);
-  ctx.fillStyle='#000';ctx.fillRect(-30,-30,W+60,H+60);
+  ctx.fillStyle='#000';ctx.fillRect(-40,-40,CANW+80,CANH+80);
   if(state==='title'){drawTitle();ctx.restore();return;}
+  if(mode==='2002')ctx.translate(0,OFY);   // ここから下は盤面座標のまま
 
   drawPCBackground();
   drawWalls();
@@ -1255,7 +1282,8 @@ function render(){
     else{ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,7);ctx.fill();}
   }
 
-  drawHUD();
+  if(mode==='2002'){ctx.save();ctx.translate(0,-OFY);drawTopBar();drawCtrlPanel();ctx.restore();}
+  else drawHUD();
   if(reverseT>0){ctx.textAlign='center';ctx.textBaseline='middle';
     ctx.font='bold '+(mode==='2002'?9:15)+'px "Courier New",monospace';ctx.fillStyle='#ff6060';
     ctx.fillText('REVERSE!',CX(),PADY-(mode==='2002'?22:40));}
@@ -1297,8 +1325,9 @@ function loop(t){
   render();
 }
 document.addEventListener('visibilitychange',()=>{last=0;acc=0;});
-if(new URLSearchParams(location.search).get('pc2002')==='1'){mode='2002';setLayout('2002');startGame();}
-else setLayout('1986');
+setLayout('2002');
+if(new URLSearchParams(location.search).get('start')==='1'||
+   new URLSearchParams(location.search).get('pc2002')==='1')startGame();
 requestAnimationFrame(loop);
 
 })();
