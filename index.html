@@ -64,19 +64,24 @@ window.addEventListener('resize',fitDPR);
 
 
 /* ==========================================================
-   2002モードの調整値。仕様書v0.1の実測/近似をここに集約。
+   2002モードの調整値。PC版実動画とのフレーム比較 v4。
    v0.2の計測が出たらこのブロックだけ差し替えれば反映される。
    ========================================================== */
 const TUNE={
-  ballSpeedPxPerSec:100,      // [動画実測] ROUND2序盤 95〜105
+  ballSpeedPxPerSec:100,      // [実測] R1序盤の基準速度。以後はbrick hitで段階加速
   paddleSpeed:[2,4,8],        // [確定] 通常 / 1ボタン / 2ボタン
-  expandTicks:30,             // [動画実測] 約0.5秒で伸び切る
-  maxAngleDeg:70,             // [近似] 65〜72で調整可
-  angleZones:7,               // [近似] SFCらしい量子化
+  expandTicks:12,             // [再実測] E取得後 約0.20秒で32→48 / 48→64
+  bounceAnglesDeg:[20,40,60],// [再実測] VAUS反射は約20°/40°/60°の3段階（鉛直基準）
+  bounceZone1:1/3,            // 内側ゾーン境界
+  bounceZone2:2/3,            // 外側ゾーン境界
+  centerDirDeadzone:0.05,     // 真中央だけ入射時の左右方向を維持
+  launchAngleDeg:20,          // [再実測] 初回発射は鉛直から約20°、右向き
+  speedStepGain:0.13,         // [再実測] 段階加速は約13%刻みがR1動画と整合
+  speedStepMax:5,             // 上限（後半ラウンドは追加検証予定）
   laserSpeedPxPerSec:170,     // [動画実測]
   laserCooldownTicks:30,      // [動画実測] 約0.5秒間隔
   laserPairSpacing:13,        // [動画実測]
-  capsuleFallPxPerTick:0.7,   // [未計測] v0.2で要実測
+  capsuleFallPxPerTick:1.5,   // [再実測] R1 Eカプセル: 約1.48px/tick ≒ 1.5
   enemyShotPxPerTick:0.75,    // [未計測] v0.2で要実測
   catchReleaseTicks:190,      // [未計測] v0.2で要実測
   maxCapsulesOnScreen:2,      // [確定]
@@ -214,17 +219,22 @@ function baseSpeed(){
   return s;
 }
 function ballSpeed(){
-  if(mode==='2002') return baseSpeed()*slowF; // 原作は極端に高速化しない
+  if(mode==='2002') return baseSpeed()*(1+TUNE.speedStepGain*speedStep)*slowF;
   return baseSpeed()*(1+0.13*speedStep)*slowF;
 }
 function renorm(){const t=ballSpeed();
   for(const b of balls){if(b.stuck)continue;const s=Math.hypot(b.vx,b.vy)||1;b.vx=b.vx/s*t;b.vy=b.vy/s*t;}}
 function recalcStep(){
-  if(mode==='2002')return;
   let s=0;
   for(let i=0;i<STEPS.length;i++) if(hitCount>=STEPS[i])s++;
-  if(ceilHit)s++;
-  s=Math.min(s+Math.floor(stallT/2400),5);
+  if(mode==='2002'){
+    // PC版R1の実測では、序盤≈100 → 終盤≈150px/sへ段階的に加速。
+    // 天井到達だけで直ちに加速する証拠は取れていないため、PC版ではhitCountのみ採用。
+    s=Math.min(s,TUNE.speedStepMax);
+  }else{
+    if(ceilHit)s++;
+    s=Math.min(s+Math.floor(stallT/2400),5);
+  }
   if(s!==speedStep){speedStep=s;renorm();}
 }
 function countHit(){hitCount++;slowF=Math.min(1,slowF+0.006);recalcStep();renorm();}
@@ -352,8 +362,15 @@ function press(){
 function launch(){state='play';msg='';const b=balls[0];if(b&&b.stuck)releaseBall(b);}
 function releaseBall(b){
   b.stuck=false;paddle.holdT=0;
-  const s=ballSpeed(),a=0.62;
-  b.vx=Math.sin(a)*s*(b.off<0?-1:1);b.vy=-Math.cos(a)*s;
+  const s=ballSpeed();
+  if(mode==='2002'){
+    const a=TUNE.launchAngleDeg*Math.PI/180;
+    // 初回サーブは原作動画どおり右上へ約20°。Catch後は保持位置の側へ返す。
+    const dir=(Math.abs(b.off)<0.01)?1:(b.off<0?-1:1);
+    b.vx=Math.sin(a)*s*dir;b.vy=-Math.cos(a)*s;
+  }else{
+    const a=0.62;b.vx=Math.sin(a)*s*(b.off<0?-1:1);b.vy=-Math.cos(a)*s;
+  }
   beep(700,.06,'square',.05);
 }
 let drag=null;
@@ -519,10 +536,15 @@ function bounceOffPaddle(b){
   const s=ballSpeed();
   let ang;
   if(mode==='2002'){
-    const half=(TUNE.angleZones-1)/2;
-    const q=Math.round(u*half)/half;              // 仕様書: 7段階へ量子化
-    // 真の垂直は永久往復になるため、中央ゾーンは進行方向へわずかに傾ける
-    ang=(q===0)?0.10*((b.vx<0)?-1:1):q*(TUNE.maxAngleDeg*Math.PI/180);
+    // PC版R1をフレーム計測すると、反射角は連続ではなく
+    // 鉛直基準でほぼ20° / 40° / 60°の3段階に集中した。
+    const a=Math.abs(u);
+    const deg=a<TUNE.bounceZone1?TUNE.bounceAnglesDeg[0]:
+              (a<TUNE.bounceZone2?TUNE.bounceAnglesDeg[1]:TUNE.bounceAnglesDeg[2]);
+    let dir;
+    if(a<TUNE.centerDirDeadzone)dir=(b.vx<0?-1:1);
+    else dir=(u<0?-1:1);
+    ang=dir*deg*Math.PI/180;
   }else{
     const a=Math.abs(u);
     ang=(a<=0.35?0.36:(a<=0.78?Math.PI/4:1.24))*(u<0?-1:1);
