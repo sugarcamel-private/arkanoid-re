@@ -93,6 +93,7 @@ const TUNE={
   maxCapsulesOnScreen:2,      // [確定]
   disruptionBalls:8,          // [確定] 最大8球
   readyTicks:150,              // [動画比較] PLAYER 1 / READY 約2.5秒
+  serveSpawnTicks:84,          // [動画比較] READY後のVAUS出現フェーズ 約1.4秒
   roundClearTicks:80           // [動画比較] 文字を出さずフェードして次面へ
 };
 
@@ -227,7 +228,7 @@ function addScore(n){
 }
 
 /* ===================== ラウンド ===================== */
-function silverHP(){return 2+Math.floor((round-1)/8);}
+function silverHP(){return 3;}
 function buildRound(){
   bricks=[];caps=[];shots=[];bits=[];foes=[];darts=[];pets=[];boss=null;absorbed=0;
   doorOpen=false;doorAnim=0;reverseT=0;shield=0;
@@ -243,7 +244,10 @@ function buildRound(){
     let item=false;
     const li=ITEMCH.indexOf(ch);
     if(li>=0){ch=COLKEYS[li];item=true;}
-    const hp = ch==='G'?Infinity : (ch==='S'?2 : (ch==='V'?3 : 1));
+    const hp = ch==='G' ? Infinity
+             : ch==='S' ? 3
+             : ch==='V' ? 3
+             : 1;
     bricks.push({x:FX+c*BW,y:TOP+r*BH,t:ch,alive:true,hit:0,hp:hp,item:item});
   }
 }
@@ -254,7 +258,18 @@ function makeBoss(kind){
     for(let c=0;c<COLS;c++) if('GG.......GG'[c]==='G')
       bricks.push({x:FX+c*BW,y:TOP+188,t:'G',alive:true,hit:0,hp:Infinity,item:false});
   }else if(kind==='crawler'){
-    boss={kind:'crawler',t:0,trail:[],seg:[],dart:150,flash:0,amp:FW*0.36,cy:ROOF+30,lead:6};
+    boss={
+      kind:'crawler',
+      t:0,
+      trail:[],
+      seg:[],
+      dart:150,
+      flash:0,
+      hp:18,       // 動画実測の暫定値
+      amp:FW*0.36,
+      cy:ROOF+30,
+      lead:6
+    };
     for(let i=0;i<8;i++)boss.seg.push({alive:true});
   }else if(kind==='doh'){
     boss={kind:'doh',x:cx,y:ROOF+40,w:66,h:56,hp:16,flash:0,timer:220,flip:false,laser:280,minions:[]};
@@ -275,14 +290,15 @@ function clearEffects(){
   paddle.laser=0;paddle.catchOn=0;paddle.holdT=0;paddle.mega=0;paddle.scoreMul=1;
   // S・B・Pは他のアイテムでは解除されない
 }
+const SPAWN_X=48;                      // [動画比較] ラウンド開始/ミス後のVAUS中心X
 function newBall(){
   const bx=paddle.x+paddle.w/2;
   balls=[{x:bx,y:PADY-BR-1,vx:0,vy:0,r:BR,stuck:true,off:0}];
 }
 function startRound(){
   buildRound();clearEffects();
-  paddle.x=CX()-paddle.w/2;
-  paddle.target=paddle.x+paddle.w/2;
+  paddle.x=SPAWN_X-paddle.w/2;
+  paddle.target=SPAWN_X;
   newBall();
   if(mode==='2002'){state='ready';msg='';readyT=TUNE.readyTicks;fadeIn=24;serveSpawn=0;}
   else{state='ready';msg='ROUND '+round;readyT=300;}
@@ -297,10 +313,17 @@ function loseLife(){
     return;
   }
   caps=[];shots=[];darts=[];pets=[];absorbed=0;shield=0;
-  clearEffects();doorOpen=false;slowF=1;recalcStep();
+  clearEffects();doorOpen=false;
+  // ミス時は加速状態を完全リセット
+  hitCount=0;
+  speedStep=0;
+  ceilHit=false;
+  slowF=1;
+  stallT=0;
+  recalcStep();
   if(boss&&boss.kind==='doh86')boss.hp=16;
-  paddle.x=CX()-paddle.w/2;paddle.target=paddle.x+paddle.w/2;newBall();
-  if(mode==='2002'){state='ready';msg='';readyT=120;serveSpawn=0;}
+  paddle.x=SPAWN_X-paddle.w/2;paddle.target=SPAWN_X;newBall();
+  if(mode==='2002'){state='ready';msg='';readyT=TUNE.readyTicks;serveSpawn=0;}
   else{state='ready';msg='READY';readyT=180;}
 }
 function clearRound(bonus){
@@ -324,9 +347,14 @@ function press(){
   if(state==='title'){setLayout('2002');startGame();return;}
   if(state==='over'||state==='win'){state='title';return;}
   if(state==='continue'){lives=3;caps=[];shots=[];darts=[];pets=[];absorbed=0;shield=0;
-    clearEffects();doorOpen=false;slowF=1;recalcStep();newBall();
-    state='ready';msg='ROUND '+round;readyT=180;return;}
+    score=0;
+    nextExt=20000;
+    clearEffects();doorOpen=false;
+    hitCount=0;speedStep=0;ceilHit=false;slowF=1;stallT=0;recalcStep();
+    paddle.x=SPAWN_X-paddle.w/2;paddle.target=SPAWN_X;newBall();
+    state='ready';msg='';readyT=TUNE.readyTicks;serveSpawn=0;return;}
   if(state==='ready')return;
+  if(state==='spawn')return;
   if(state==='serve'){launch();return;}
   if(state==='play'){
     let did=false;
@@ -628,14 +656,16 @@ function ballVsBoss(b){
     }
   }else if(bo.kind==='crawler'){
     for(let i=0;i<bo.seg.length;i++){
-      const s=bo.seg[i];if(!s.alive)continue;
       const p=bo.trail[Math.min(bo.trail.length-1,i*bo.lead)];if(!p)continue;
       const rr=b.r+(mode==='2002'?6:12),dx=b.x-p.x,dy=b.y-p.y;
       if(dx*dx+dy*dy<rr*rr){
-        s.alive=false;addScore(1000);burst(p.x,p.y,'#ffe14d',14);shake=6;beep(180,.14,'square',.06);
+        bo.hp--;
+        bo.flash=10;
+        addScore(1000);
+        burst(p.x,p.y,'#8ff0ff',14);shake=6;beep(180,.14,'square',.06);
         const a=Math.atan2(dy,dx),sp=Math.hypot(b.vx,b.vy);
         b.vx=Math.cos(a)*sp;b.vy=Math.sin(a)*sp;
-        if(!bo.seg.some(x=>x.alive))clearRound(0);
+        if(bo.hp<=0)clearRound(0);
         return true;
       }
     }
@@ -684,11 +714,27 @@ function update(){
   const px=Math.max(FX+paddle.w/2,Math.min(rl,paddle.target));
   paddle.x+=(px-paddle.w/2-paddle.x)*(drag?0.85:0.45);
 
+  if(mode==='2002'&&(state==='ready'||state==='spawn')){
+    paddle.target=SPAWN_X;paddle.x=SPAWN_X-paddle.w/2;   // 出現フェーズは動かせない
+  }
+
   for(const b of balls) if(b.stuck){b.x=paddle.x+paddle.w/2+b.off;b.y=PADY-b.r-1;}
 
   if(state==='clear'){updateBits();
     if(--clearT<=0){if(round>=FINAL)finishGame();else{round++;startRound();}}return;}
-  if(state==='ready'){updateBits();if(--readyT<=0){if(mode==='2002'){state='serve';serveSpawn=22;}else launch();}return;}
+  if(state==='ready'){
+    updateBits();
+    if(--readyT<=0){
+      if(mode==='2002'){state='spawn';serveSpawn=TUNE.serveSpawnTicks;}
+      else launch();
+    }
+    return;
+  }
+  if(state==='spawn'){
+    updateBits();
+    if(serveSpawn<=0)state='serve';
+    return;
+  }
   if(state==='continue'){updateBits();if(--contT<=0){state='over';msg='GAME OVER';}return;}
   if(state!=='play'){updateBits();return;}
 
@@ -1033,13 +1079,13 @@ function drawBoss(){
       ctx.fillStyle='#ffd0a0';ctx.beginPath();ctx.arc(m.x,m.y,r*0.42,0,7);ctx.fill();
     }
   }else if(b.kind==='crawler'){
-    const R=(mode==='2002')?6:11;
+    const R=(mode==='2002')?6:11,fl=b.flash>0;
     for(let i=b.seg.length-1;i>=0;i--){
-      if(!b.seg[i].alive)continue;
       const p=b.trail[Math.min(b.trail.length-1,i*b.lead)];if(!p)continue;
-      ctx.fillStyle=i===0?'#ffe14d':'#e0b020';
+      ctx.fillStyle=fl?(i===0?'#a8f4ff':'#3cbcfc'):(i===0?'#ffe14d':'#e0b020');
       ctx.beginPath();ctx.arc(p.x,p.y,i===0?R*1.25:R,0,7);ctx.fill();
-      ctx.fillStyle='#805000';ctx.beginPath();ctx.arc(p.x,p.y,R*0.4,0,7);ctx.fill();
+      ctx.fillStyle=fl?'#10406c':'#805000';
+      ctx.beginPath();ctx.arc(p.x,p.y,R*0.4,0,7);ctx.fill();
     }
   }else if(b.kind==='dohfinal'){
     const x=b.x,y=b.y,w=b.w,h=b.h;
@@ -1266,14 +1312,17 @@ function render(){
     }
   }
 
-  const hidePCServe=(mode==='2002'&&state==='ready');
-  if(state!=='over'&&state!=='win'&&!hidePCServe){
+  const hidePCVaus=(mode==='2002'&&state==='ready');
+  const hidePCBall=(mode==='2002'&&(state==='ready'||state==='spawn'));
+  if(state!=='over'&&state!=='win'&&!hidePCVaus){
     if(state==='ready'&&mode!=='2002'){ctx.fillStyle='rgba(60,188,252,.08)';ctx.fillRect(FX,PADY-70,FW,H-(PADY-70));}
     drawPaddle();
-    if(mode==='2002'&&state==='serve'&&serveSpawn>0){ctx.fillStyle='rgba(255,255,255,'+(serveSpawn/28)+')';
+    if(mode==='2002'&&state==='spawn'&&serveSpawn>0){
+      const a=serveSpawn/TUNE.serveSpawnTicks;
+      ctx.fillStyle='rgba(255,255,255,'+(0.15+0.5*a)+')';
       const cx=paddle.x+paddle.w/2;ctx.fillRect(cx-22,PADY-3,44,1);ctx.fillRect(cx-14,PADY-7,28,1);}
   }
-  for(const b of balls){if(hidePCServe)continue;
+  for(const b of balls){if(hidePCBall)continue;
     if(paddle.mega){ctx.fillStyle='rgba(120,255,160,.4)';ctx.beginPath();ctx.arc(b.x,b.y,b.r+3,0,7);ctx.fill();
       ctx.fillStyle='#b0ffc0';}
     else{if(mode!=='2002'){ctx.fillStyle='rgba(216,40,0,.35)';ctx.beginPath();ctx.arc(b.x,b.y,b.r+3,0,7);ctx.fill();}
