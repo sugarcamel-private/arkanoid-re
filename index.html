@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.json">
 <meta name="apple-mobile-web-app-title" content="VAUS">
 <meta name="application-name" content="VAUS">
-<title>VAUS - 2002 PC Visual v3</title>
+<title>VAUS - 2002 PC Visual v4</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;}
   html,body{height:100%;}
@@ -92,8 +92,10 @@ const TUNE={
   catchReleaseTicks:190,      // [未計測] v0.2で要実測
   maxCapsulesOnScreen:2,      // [確定]
   disruptionBalls:8,          // [確定] 最大8球
-  readyTicks:150,              // [動画比較] PLAYER 1 / READY 約2.5秒
-  serveSpawnTicks:84,          // [動画比較] READY後のVAUS出現フェーズ 約1.4秒
+  readyTicks:150,              // [動画確定] PLAYER 1 / READY の可視時間 約2.5秒
+  readyFadeTicks:24,           // [HTML補正] 初回フェード中はREADY可視時間に含めない
+  serveSpawnTicks:84,          // [動画確定] READY消失→球出現 約1.4秒
+  vausFormTicks:22,            // [動画強支持] READY後、VAUS完成まで約0.37秒
   roundClearTicks:80           // [動画比較] 文字を出さずフェードして次面へ
 };
 
@@ -174,7 +176,7 @@ let doorOpen=false,doorAnim=0,reverseT=0,shield=0;
 let hitCount=0,speedStep=0,ceilHit=false,slowF=1,stallT=0;
 let capCount=0,capTarget=0,capIdx=0,lastCap='',capStreak=0,volley=0;
 let boss=null,absorbed=0;
-let msg='',readyT=0,clearT=0,contT=0,shake=0,flash=0,fireCool=0,foeTimer=0;
+let msg='',readyT=0,readyDelayT=0,clearT=0,contT=0,shake=0,flash=0,fireCool=0,foeTimer=0;
 let fadeIn=0,serveSpawn=0;
 
 /* ===================== 速度 ===================== */
@@ -285,8 +287,9 @@ function setWidth(w,animate){
   else{paddle.w=w;paddle.wTarget=w;paddle.animT=0;}
   paddle.x=c-(paddle.animT?paddle.w:w)/2;
 }
-function clearEffects(){
-  paddle.expandLv=0;setWidth(PW_N,false);
+function clearEffects(keepExpand=false){
+  // E連続取得時だけ現在の拡張段階/幅を維持し、その他の排他的効果は従来どおり解除する。
+  if(!keepExpand){paddle.expandLv=0;setWidth(PW_N,false);}
   paddle.laser=0;paddle.catchOn=0;paddle.holdT=0;paddle.mega=0;paddle.scoreMul=1;
   // S・B・Pは他のアイテムでは解除されない
 }
@@ -300,7 +303,10 @@ function startRound(){
   paddle.x=SPAWN_X-paddle.w/2;
   paddle.target=SPAWN_X;
   newBall();
-  if(mode==='2002'){state='ready';msg='';readyT=TUNE.readyTicks;fadeIn=24;serveSpawn=0;}
+  if(mode==='2002'){
+    state='ready';msg='';readyT=TUNE.readyTicks;
+    readyDelayT=TUNE.readyFadeTicks;fadeIn=TUNE.readyFadeTicks;serveSpawn=0;
+  }
   else{state='ready';msg='ROUND '+round;readyT=300;}
 }
 function startGame(){score=0;lives=3;round=1;nextExt=20000;startRound();}
@@ -323,7 +329,7 @@ function loseLife(){
   recalcStep();
   if(boss&&boss.kind==='doh86')boss.hp=16;
   paddle.x=SPAWN_X-paddle.w/2;paddle.target=SPAWN_X;newBall();
-  if(mode==='2002'){state='ready';msg='';readyT=TUNE.readyTicks;serveSpawn=0;}
+  if(mode==='2002'){state='ready';msg='';readyT=TUNE.readyTicks;readyDelayT=0;serveSpawn=0;}
   else{state='ready';msg='READY';readyT=180;}
 }
 function clearRound(bonus){
@@ -352,7 +358,7 @@ function press(){
     clearEffects();doorOpen=false;
     hitCount=0;speedStep=0;ceilHit=false;slowF=1;stallT=0;recalcStep();
     paddle.x=SPAWN_X-paddle.w/2;paddle.target=SPAWN_X;newBall();
-    state='ready';msg='';readyT=TUNE.readyTicks;serveSpawn=0;return;}
+    state='ready';msg='';readyT=TUNE.readyTicks;readyDelayT=0;serveSpawn=0;return;}
   if(state==='ready')return;
   if(state==='spawn')return;
   if(state==='serve'){launch();return;}
@@ -445,7 +451,8 @@ function tryDropCap(x,y,fromItemBlock){
 function applyCap(t){
   if(t===lastCap){capStreak=Math.min(capStreak+1,4);}else{capStreak=0;lastCap=t;}
   addScore(1000*(mode==='2002'?(capStreak+1):1));
-  if(t!=='S'&&t!=='B'&&t!=='P'&&t!=='T')clearEffects();
+  if(t==='E'&&mode==='2002')clearEffects(true);
+  else if(t!=='S'&&t!=='B'&&t!=='P'&&t!=='T')clearEffects();
   beep(900,.1,'triangle',.06);
   if(t==='E'){
     if(mode==='2002'){paddle.expandLv=Math.min(2,paddle.expandLv+1);
@@ -655,20 +662,28 @@ function ballVsBoss(b){
       }
     }
   }else if(bo.kind==='crawler'){
+    let touch=null;
     for(let i=0;i<bo.seg.length;i++){
       const p=bo.trail[Math.min(bo.trail.length-1,i*bo.lead)];if(!p)continue;
       const rr=b.r+(mode==='2002'?6:12),dx=b.x-p.x,dy=b.y-p.y;
-      if(dx*dx+dy*dy<rr*rr){
-        bo.hp--;
-        bo.flash=10;
-        addScore(1000);
-        burst(p.x,p.y,'#8ff0ff',14);shake=6;beep(180,.14,'square',.06);
-        const a=Math.atan2(dy,dx),sp=Math.hypot(b.vx,b.vy);
-        b.vx=Math.cos(a)*sp;b.vy=Math.sin(a)*sp;
-        if(bo.hp<=0)clearRound(0);
-        return true;
-      }
+      if(dx*dx+dy*dy<rr*rr){touch={p,dx,dy,rr};break;}
     }
+    if(!touch){b.crawlerTouch=false;return false;}
+    const {p,dx,dy,rr}=touch;
+    if(!b.crawlerTouch){
+      bo.hp--;
+      bo.flash=10;
+      addScore(1000);
+      burst(p.x,p.y,'#8ff0ff',14);shake=6;beep(180,.14,'square',.06);
+      if(bo.hp<=0)clearRound(0);
+    }
+    b.crawlerTouch=true;
+    const a=Math.atan2(dy,dx),sp=Math.hypot(b.vx,b.vy);
+    b.vx=Math.cos(a)*sp;b.vy=Math.sin(a)*sp;
+    // 次フレームも深く重なったままにならないよう、接触面まで押し戻す。
+    const d=Math.hypot(dx,dy)||1,sep=rr+0.01;
+    b.x=p.x+dx/d*sep;b.y=p.y+dy/d*sep;
+    return true;
   }else if(bo.kind==='dohfinal'){
     for(const a of bo.arms){
       if(a.hp<=0)continue;
@@ -724,6 +739,7 @@ function update(){
     if(--clearT<=0){if(round>=FINAL)finishGame();else{round++;startRound();}}return;}
   if(state==='ready'){
     updateBits();
+    if(mode==='2002'&&readyDelayT>0){readyDelayT--;return;}
     if(--readyT<=0){
       if(mode==='2002'){state='spawn';serveSpawn=TUNE.serveSpawnTicks;}
       else launch();
@@ -852,7 +868,7 @@ function update(){
   }
 
   if(shots.length){
-    const hitLinks={},sp=(mode==='2002')?TUNE.laserSpeedPxPerSec/60:9;
+    const sp=(mode==='2002')?TUNE.laserSpeedPxPerSec/60:9;
     for(const s of shots){
       s.y-=sp;
       if(s.y<ROOF){s.dead=true;continue;}
@@ -872,9 +888,10 @@ function update(){
           break;
         }
       }
-      if(gone){s.dead=true;hitLinks[s.link]=1;}
+      if(gone)s.dead=true;
     }
-    shots=shots.filter(s=>!s.dead&&!hitLinks[s.link]);
+    // 左右レーザーは同時発射でも独立。片側の命中で反対側を消さない。
+    shots=shots.filter(s=>!s.dead);
   }
 
   updateBits();
@@ -1015,6 +1032,38 @@ function drawPaddle(){
     }
   }
 }
+function drawVausSpawn(){
+  const elapsed=TUNE.serveSpawnTicks-serveSpawn;
+  const p=Math.max(0,Math.min(1,elapsed/TUNE.vausFormTicks));
+  const x=paddle.x,y=PADY,w=paddle.w,cx=x+w/2;
+  if(p>=1){drawPaddle();return;}
+
+  // 原作録画の「粒子→発光する横棒→完成形」を、決定的な粒子配置で近似。
+  ctx.save();
+  const n=26;
+  for(let i=0;i<n;i++){
+    const seed=(i*37+11)%97,phase=elapsed*0.31+i*1.73;
+    const spread=(1-p)*18+2;
+    const px=cx+Math.sin(seed*1.91+phase)*spread;
+    const py=y+PADH/2+Math.cos(seed*1.37-phase*.7)*((1-p)*8+1);
+    const a=Math.max(0,0.18+0.75*p-0.012*i);
+    ctx.globalAlpha=a;
+    ctx.fillStyle=(i%3===0)?'#9ecbff':'#ffffff';
+    ctx.fillRect(Math.round(px),Math.round(py),1,1);
+  }
+  if(p>0.28){
+    const q=(p-0.28)/0.72,ew=Math.max(2,Math.round(w*Math.min(1,q*1.35)));
+    ctx.globalAlpha=Math.min(1,0.30+q);
+    ctx.fillStyle='#ffffff';ctx.fillRect(Math.round(cx-ew/2),y+2,ew,3);
+    ctx.fillStyle='#ffb8c0';ctx.fillRect(Math.round(cx-ew/2),y+3,ew,2);
+  }
+  if(p>0.72){
+    ctx.globalAlpha=(p-0.72)/0.28;
+    drawPaddle();
+  }
+  ctx.restore();
+}
+
 function drawFoe(f){
   const t=f.t*0.08,R=foeR();
   ctx.save();ctx.translate(f.x,f.y);
@@ -1316,11 +1365,8 @@ function render(){
   const hidePCBall=(mode==='2002'&&(state==='ready'||state==='spawn'));
   if(state!=='over'&&state!=='win'&&!hidePCVaus){
     if(state==='ready'&&mode!=='2002'){ctx.fillStyle='rgba(60,188,252,.08)';ctx.fillRect(FX,PADY-70,FW,H-(PADY-70));}
-    drawPaddle();
-    if(mode==='2002'&&state==='spawn'&&serveSpawn>0){
-      const a=serveSpawn/TUNE.serveSpawnTicks;
-      ctx.fillStyle='rgba(255,255,255,'+(0.15+0.5*a)+')';
-      const cx=paddle.x+paddle.w/2;ctx.fillRect(cx-22,PADY-3,44,1);ctx.fillRect(cx-14,PADY-7,28,1);}
+    if(mode==='2002'&&state==='spawn')drawVausSpawn();
+    else drawPaddle();
   }
   for(const b of balls){if(hidePCBall)continue;
     if(paddle.mega){ctx.fillStyle='rgba(120,255,160,.4)';ctx.beginPath();ctx.arc(b.x,b.y,b.r+3,0,7);ctx.fill();
@@ -1351,7 +1397,7 @@ function render(){
     drawCenter([{t:'CONGRATULATIONS',size:21,color:'#fc9838'},
       {t:mode==='2002'?'WORLD 1 COMPLETE':'DOH HAS FALLEN',size:13,color:'#3cbcfc'},
       {t:'',size:4},{t:'SCORE '+score,size:17},{t:'タップでタイトルへ',size:13,color:'#8890b0'}],H/2,cx);
-  }else if(mode==='2002'&&state==='ready'){
+  }else if(mode==='2002'&&state==='ready'&&readyDelayT<=0){
     pcText('PLAYER 1',CX(),141,1,'#f8f8ff','center');pcText('READY',CX(),154,1,'#f8f8ff','center');
   }else if(msg&&(state==='ready'||state==='clear')){
     drawCenter([{t:msg,size:20,color:state==='clear'?'#fc9838':'#fcfcfc'}],H/2,cx);
